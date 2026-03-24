@@ -5,6 +5,7 @@ export interface MenuItem {
   price: number
   happyHourPrice?: number
   category: string // e.g. "Burger", "Cocktail", "Draft Beer", "Wine", "Appetizer"
+  normalizedName: string // generic searchable term, e.g. "Margarita", "Wings", "IPA"
   tags?: string[]
   lastUpdated: string // ISO date string
 }

@@ -28,6 +28,12 @@ export default function RootLayout({
                 Restaurants
               </Link>
               <Link
+                href="/items"
+                className="px-3 py-1.5 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+              >
+                Find an Item
+              </Link>
+              <Link
                 href="/compare"
                 className="px-3 py-1.5 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
               >

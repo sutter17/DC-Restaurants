@@ -19,6 +19,18 @@ export default function HomePage() {
       {/* Quick-action cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
         <Link
+          href="/items"
+          className="group flex items-start gap-3 bg-white border border-gray-200 rounded-xl p-4 hover:border-orange-300 hover:shadow-sm transition-all"
+        >
+          <span className="text-2xl">🔍</span>
+          <div>
+            <div className="font-semibold text-gray-900 group-hover:text-orange-600 transition-colors">
+              Find an Item
+            </div>
+            <div className="text-sm text-gray-500">Search burger, margarita, IPA…</div>
+          </div>
+        </Link>
+        <Link
           href="/happy-hours"
           className="group flex items-start gap-3 bg-white border border-gray-200 rounded-xl p-4 hover:border-orange-300 hover:shadow-sm transition-all"
         >
