@@ -517,14 +517,69 @@ export interface ItemResult {
   price: number
   isHappyHour: boolean
   happyHourSchedule?: string
+  menuSection: string
   lastUpdated: string
+}
+
+/** Full-text search across item name + description + normalizedName. All query words must match. */
+export function searchMenuItems(query: string): ItemResult[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return []
+  const results: ItemResult[] = []
+
+  restaurants.forEach((r) => {
+    const test = (item: { name: string; description?: string; normalizedName: string }) => {
+      const text = `${item.name} ${item.description ?? ""} ${item.normalizedName}`.toLowerCase()
+      return words.every((w) => text.includes(w))
+    }
+
+    r.menu.forEach((section) => {
+      section.items.forEach((item) => {
+        if (test(item)) {
+          results.push({
+            restaurantId: r.id,
+            restaurantName: r.name,
+            neighborhood: r.neighborhood,
+            priceRange: r.priceRange,
+            menuItemName: item.name,
+            description: item.description,
+            price: item.price,
+            isHappyHour: false,
+            menuSection: section.name,
+            lastUpdated: item.lastUpdated,
+          })
+        }
+      })
+    })
+
+    r.happyHour?.sections.forEach((section) => {
+      section.items.forEach((item) => {
+        if (test(item)) {
+          results.push({
+            restaurantId: r.id,
+            restaurantName: r.name,
+            neighborhood: r.neighborhood,
+            priceRange: r.priceRange,
+            menuItemName: item.name,
+            description: item.description,
+            price: item.price,
+            isHappyHour: true,
+            happyHourSchedule: r.happyHour!.schedule,
+            menuSection: section.name,
+            lastUpdated: item.lastUpdated,
+          })
+        }
+      })
+    })
+  })
+
+  return results.sort((a, b) => a.price - b.price)
 }
 
 /** Return every occurrence of a normalizedName across all restaurants (regular + HH menus). */
 export function findItemResults(normalizedName: string): ItemResult[] {
   const results: ItemResult[] = []
   restaurants.forEach((r) => {
-    // Regular menu
     r.menu.forEach((section) => {
       section.items.forEach((item) => {
         if (item.normalizedName === normalizedName) {
@@ -537,12 +592,12 @@ export function findItemResults(normalizedName: string): ItemResult[] {
             description: item.description,
             price: item.price,
             isHappyHour: false,
+            menuSection: section.name,
             lastUpdated: item.lastUpdated,
           })
         }
       })
     })
-    // Happy hour menu
     r.happyHour?.sections.forEach((section) => {
       section.items.forEach((item) => {
         if (item.normalizedName === normalizedName) {
@@ -556,6 +611,7 @@ export function findItemResults(normalizedName: string): ItemResult[] {
             price: item.price,
             isHappyHour: true,
             happyHourSchedule: r.happyHour!.schedule,
+            menuSection: section.name,
             lastUpdated: item.lastUpdated,
           })
         }

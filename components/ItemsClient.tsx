@@ -1,15 +1,14 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect, useRef } from "react"
 import Link from "next/link"
-import { findItemResults, ItemResult } from "@/data/restaurants"
+import { searchMenuItems, findItemResults, ItemResult, getAllNormalizedNames } from "@/data/restaurants"
 
 interface Props {
   allItems: { name: string; count: number }[]
+  neighborhoods: string[]
 }
 
-// Broad groupings for the browse grid — makes it easy to find things
-// without knowing the exact normalizedName
 const GROUPS: { label: string; emoji: string; names: string[] }[] = [
   {
     label: "Burgers & Sandwiches",
@@ -19,12 +18,12 @@ const GROUPS: { label: string; emoji: string; names: string[] }[] = [
   {
     label: "Starters & Snacks",
     emoji: "🍟",
-    names: ["Wings", "Nachos", "Loaded Fries", "Soft Pretzel", "Mozzarella Sticks", "Spinach Artichoke Dip", "Crab Dip", "Hummus", "Falafel", "Edamame", "Gyoza", "Takoyaki", "Charcuterie", "Soup", "Salad"],
+    names: ["Wings", "Fried Chicken", "Nachos", "Loaded Fries", "Soft Pretzel", "Mozzarella Sticks", "Spinach Artichoke Dip", "Crab Dip", "Hummus", "Falafel", "Edamame", "Gyoza", "Takoyaki", "Charcuterie", "Soup", "Salad", "Oysters", "Burrata"],
   },
   {
     label: "Mains",
     emoji: "🍽️",
-    names: ["Fish & Chips", "Fish Tacos", "Salmon", "Whole Fish", "Oysters", "Steak", "BBQ Ribs", "Roast Chicken", "Shawarma", "Lamb Chops", "Lamb Kofta", "Ramen", "Pasta", "Risotto", "Mac & Cheese", "Grain Bowl", "Rice Bowl", "Sushi Roll", "Cauliflower", "Burrata"],
+    names: ["Fish & Chips", "Fish Tacos", "Salmon", "Whole Fish", "Steak", "BBQ Ribs", "Roast Chicken", "Shawarma", "Lamb Chops", "Lamb Kofta", "Ramen", "Pasta", "Risotto", "Mac & Cheese", "Grain Bowl", "Rice Bowl", "Sushi Roll", "Cauliflower"],
   },
   {
     label: "Cocktails",
@@ -41,179 +40,219 @@ const GROUPS: { label: string; emoji: string; names: string[] }[] = [
     emoji: "🍷",
     names: ["Red Wine", "White Wine", "Rosé", "Prosecco", "Orange Wine", "Sake", "House Wine"],
   },
-  {
-    label: "Non-Alcoholic",
-    emoji: "🥤",
-    names: ["Non-Alcoholic Drink", "Non-Alcoholic Beer"],
-  },
 ]
 
-export default function ItemsClient({ allItems }: Props) {
-  const [search, setSearch] = useState("")
-  const [selected, setSelected] = useState<string | null>(null)
+export default function ItemsClient({ allItems, neighborhoods }: Props) {
+  const [query, setQuery] = useState("")
+  const [neighborhood, setNeighborhood] = useState("")
   const [hhOnly, setHhOnly] = useState(false)
+  const [detail, setDetail] = useState<ItemResult | null>(null)
+  const detailRef = useRef<HTMLDivElement>(null)
 
   const allNames = useMemo(() => new Set(allItems.map((i) => i.name)), [allItems])
 
-  // Filtered item list for the search suggestions
-  const filtered = useMemo(() => {
-    if (!search.trim()) return []
-    const q = search.toLowerCase()
-    return allItems.filter((i) => i.name.toLowerCase().includes(q)).slice(0, 12)
-  }, [search, allItems])
+  // Full-text search results (when query is free-text)
+  const searchResults: ItemResult[] = useMemo(() => {
+    if (!query.trim()) return []
+    return searchMenuItems(query)
+  }, [query])
 
-  // Results for the selected item
-  const results: ItemResult[] = useMemo(() => {
-    if (!selected) return []
-    const all = findItemResults(selected)
-    if (hhOnly) return all.filter((r) => r.isHappyHour)
-    return all
-  }, [selected, hhOnly])
+  // Apply neighborhood + HH filters
+  const filteredResults = useMemo(() => {
+    let r = searchResults
+    if (neighborhood) r = r.filter((i) => i.neighborhood === neighborhood)
+    if (hhOnly) r = r.filter((i) => i.isHappyHour)
+    return r
+  }, [searchResults, neighborhood, hhOnly])
 
-  // Deduplicate results: for each restaurant, show regular price + HH price together
-  const byRestaurant = useMemo(() => {
-    const map: Record<string, { regular: ItemResult[]; hh: ItemResult[] }> = {}
-    results.forEach((r) => {
-      if (!map[r.restaurantId]) map[r.restaurantId] = { regular: [], hh: [] }
-      if (r.isHappyHour) map[r.restaurantId].hh.push(r)
-      else map[r.restaurantId].regular.push(r)
-    })
-    // Sort by lowest price (regular if available, else HH)
-    return Object.values(map).sort((a, b) => {
-      const aPrice = a.regular[0]?.price ?? a.hh[0]?.price ?? 999
-      const bPrice = b.regular[0]?.price ?? b.hh[0]?.price ?? 999
-      return aPrice - bPrice
-    })
-  }, [results])
-
-  const lowestPrice = byRestaurant.length > 0
-    ? Math.min(...byRestaurant.map(g => g.regular[0]?.price ?? g.hh[0]?.price ?? 999))
+  const lowestPrice = filteredResults.length > 0
+    ? Math.min(...filteredResults.map((r) => r.price))
     : null
 
-  function selectItem(name: string) {
-    setSelected(name)
-    setSearch("")
+  // Close detail panel when clicking outside
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (detailRef.current && !detailRef.current.contains(e.target as Node)) {
+        setDetail(null)
+      }
+    }
+    if (detail) document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [detail])
+
+  function handleBrowseClick(normalizedName: string) {
+    setQuery(normalizedName)
   }
 
   return (
     <div className="space-y-6">
-      {/* Search bar */}
-      <div className="relative">
-        <input
-          type="text"
-          placeholder="Search: burger, margarita, IPA, wings, ramen…"
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setSelected(null) }}
-          className="w-full border border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white shadow-sm"
-          autoFocus
-        />
-        {filtered.length > 0 && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-20 overflow-hidden">
-            {filtered.map((item) => (
-              <button
-                key={item.name}
-                onClick={() => selectItem(item.name)}
-                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-orange-50 text-left transition-colors"
-              >
-                <span className="font-medium text-gray-900">{item.name}</span>
-                <span className="text-xs text-gray-400">{item.count} restaurant{item.count !== 1 ? "s" : ""}</span>
-              </button>
-            ))}
-          </div>
-        )}
+      {/* Search + filters row */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <input
+            type="text"
+            placeholder="chicken tacos, old fashioned, IPA, wings…"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setDetail(null) }}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white shadow-sm"
+            autoFocus
+          />
+          {query && (
+            <button
+              onClick={() => { setQuery(""); setDetail(null) }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-xl leading-none"
+              aria-label="Clear"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <select
+          value={neighborhood}
+          onChange={(e) => setNeighborhood(e.target.value)}
+          className="border border-gray-200 rounded-xl px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white text-gray-700"
+        >
+          <option value="">All neighborhoods</option>
+          {neighborhoods.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none px-4 py-3 border border-gray-200 rounded-xl bg-white hover:bg-gray-50">
+          <input
+            type="checkbox"
+            checked={hhOnly}
+            onChange={(e) => setHhOnly(e.target.checked)}
+            className="accent-orange-500"
+          />
+          Happy hour only
+        </label>
       </div>
 
-      {/* Results panel */}
-      {selected && (
+      {/* Search results */}
+      {query.trim() && (
         <div>
-          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold text-gray-900">{selected}</h2>
-              <span className="text-sm text-gray-400">— {byRestaurant.length} restaurant{byRestaurant.length !== 1 ? "s" : ""}</span>
-            </div>
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={hhOnly}
-                onChange={(e) => setHhOnly(e.target.checked)}
-                className="accent-orange-500"
-              />
-              Happy hour only
-            </label>
-          </div>
-
-          {byRestaurant.length === 0 ? (
-            <div className="text-center py-10 text-gray-400 bg-white border border-gray-200 rounded-xl">
-              No {hhOnly ? "happy hour " : ""}results for &ldquo;{selected}&rdquo;
+          {filteredResults.length === 0 ? (
+            <div className="text-center py-12 text-gray-400 bg-white border border-gray-200 rounded-xl">
+              <div className="text-3xl mb-2">🤷</div>
+              <div className="font-medium text-gray-600">No results for &ldquo;{query}&rdquo;</div>
+              <div className="text-sm mt-1">Try different words or browse by category below</div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {byRestaurant.map(({ regular, hh }) => {
-                const rep = regular[0] ?? hh[0]
-                const regularPrice = regular[0]?.price
-                const hhPrice = hh[0]?.price
-                const isLowest = (regularPrice ?? hhPrice) === lowestPrice
-                return (
-                  <Link
-                    key={rep.restaurantId}
-                    href={`/restaurants/${rep.restaurantId}`}
-                    className={`group bg-white border rounded-xl p-4 hover:shadow-md transition-all flex flex-col gap-2 ${isLowest ? "border-green-300 ring-1 ring-green-200" : "border-gray-200 hover:border-orange-300"}`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="font-semibold text-gray-900 group-hover:text-orange-600 transition-colors">
-                          {rep.restaurantName}
-                          {isLowest && (
-                            <span className="ml-2 text-xs font-medium text-green-600 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">
-                              best price
-                            </span>
+            <>
+              <div className="text-sm text-gray-500 mb-3">
+                {filteredResults.length} result{filteredResults.length !== 1 ? "s" : ""} for &ldquo;{query}&rdquo;
+                {neighborhood && <span> in {neighborhood}</span>}
+              </div>
+
+              {/* Results table */}
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="text-left px-5 py-3 font-semibold text-gray-600">Restaurant</th>
+                      <th className="text-left px-4 py-3 font-semibold text-gray-600">Item</th>
+                      <th className="text-right px-5 py-3 font-semibold text-gray-600">Price</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {filteredResults.map((result, i) => {
+                      const isLowest = result.price === lowestPrice
+                      const isActive = detail === result
+                      return (
+                        <>
+                          <tr
+                            key={result.restaurantId + result.menuItemName + i}
+                            className={`hover:bg-gray-50 transition-colors ${isActive ? "bg-orange-50" : ""}`}
+                          >
+                            <td className="px-5 py-3">
+                              <Link
+                                href={`/restaurants/${result.restaurantId}`}
+                                className="font-medium text-gray-900 hover:text-orange-600 transition-colors"
+                              >
+                                {result.restaurantName}
+                              </Link>
+                              <div className="text-xs text-gray-400 mt-0.5">{result.neighborhood}</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="font-medium text-gray-800">{result.menuItemName}</div>
+                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                {result.isHappyHour && (
+                                  <span className="text-xs bg-green-50 text-green-700 border border-green-200 rounded px-1.5 py-0.5 font-medium">
+                                    🍺 HH · {result.happyHourSchedule}
+                                  </span>
+                                )}
+                                <span className="text-xs text-gray-400">{result.menuSection}</span>
+                              </div>
+                            </td>
+                            <td className="px-5 py-3 text-right">
+                              <button
+                                onClick={() => setDetail(isActive ? null : result)}
+                                title="Click to see details"
+                                className={`inline-flex items-center gap-1.5 font-bold rounded-lg px-2.5 py-1 transition-all ${
+                                  isLowest
+                                    ? "text-green-700 bg-green-50 border border-green-200 hover:bg-green-100"
+                                    : "text-gray-900 hover:bg-gray-100 border border-transparent hover:border-gray-200"
+                                } ${isActive ? "ring-2 ring-orange-400" : ""}`}
+                              >
+                                ${result.price.toFixed(2)}
+                                {isLowest && <span className="text-xs font-normal text-green-600">best</span>}
+                                <span className="text-gray-400 text-xs">ⓘ</span>
+                              </button>
+                            </td>
+                          </tr>
+                          {/* Inline detail panel */}
+                          {isActive && (
+                            <tr key={`detail-${i}`} className="bg-orange-50">
+                              <td colSpan={3} className="px-5 py-4">
+                                <div ref={detailRef} className="flex flex-col gap-1.5 text-sm">
+                                  <div className="font-semibold text-gray-900 text-base">{result.menuItemName}</div>
+                                  {result.description && (
+                                    <div className="text-gray-700 leading-snug">{result.description}</div>
+                                  )}
+                                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-xs text-gray-500">
+                                    <span>
+                                      <span className="font-medium text-gray-700">Section:</span> {result.menuSection}
+                                    </span>
+                                    <span>
+                                      <span className="font-medium text-gray-700">Price:</span> ${result.price.toFixed(2)}
+                                    </span>
+                                    {result.isHappyHour && result.happyHourSchedule && (
+                                      <span className="text-green-700 font-medium">
+                                        Happy Hour: {result.happyHourSchedule}
+                                      </span>
+                                    )}
+                                    <span>
+                                      <span className="font-medium text-gray-700">Updated:</span>{" "}
+                                      {new Date(result.lastUpdated).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1">
+                                    <Link
+                                      href={`/restaurants/${result.restaurantId}`}
+                                      className="text-xs text-orange-600 hover:underline font-medium"
+                                    >
+                                      View full menu at {result.restaurantName} →
+                                    </Link>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
                           )}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-0.5">{rep.neighborhood} · {rep.priceRange}</div>
-                      </div>
-                    </div>
-
-                    {/* Menu item names */}
-                    <div className="text-sm text-gray-500 italic">
-                      {[...regular.map(r => r.menuItemName), ...hh.map(r => r.menuItemName)]
-                        .filter((v, i, a) => a.indexOf(v) === i)
-                        .join(", ")}
-                    </div>
-
-                    {/* Prices */}
-                    <div className="flex flex-wrap items-center gap-3 mt-1">
-                      {regularPrice !== undefined && (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xl font-bold text-gray-900">${regularPrice.toFixed(2)}</span>
-                          <span className="text-xs text-gray-400">regular</span>
-                        </div>
-                      )}
-                      {hhPrice !== undefined && (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xl font-bold text-green-700">${hhPrice.toFixed(2)}</span>
-                          <span className="text-xs bg-green-50 text-green-700 border border-green-200 rounded px-1.5 py-0.5 font-medium">
-                            🍺 HH · {hh[0].happyHourSchedule}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Description from first result */}
-                    {rep.description && (
-                      <p className="text-xs text-gray-400 leading-snug">{rep.description}</p>
-                    )}
-                  </Link>
-                )
-              })}
-            </div>
+                        </>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       )}
 
-      {/* Browse grid — shown when nothing is selected */}
-      {!selected && !search && (
+      {/* Browse grid — shown when no query */}
+      {!query.trim() && (
         <div className="space-y-6">
-          <div className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Browse by type</div>
+          <div className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Or browse by type</div>
           {GROUPS.map((group) => {
             const available = group.names.filter((n) => allNames.has(n))
             if (available.length === 0) return null
@@ -229,7 +268,7 @@ export default function ItemsClient({ allItems }: Props) {
                     return (
                       <button
                         key={name}
-                        onClick={() => selectItem(name)}
+                        onClick={() => handleBrowseClick(name)}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:border-orange-300 hover:text-orange-600 hover:bg-orange-50 transition-all"
                       >
                         {name}
